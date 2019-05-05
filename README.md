@@ -1,5 +1,5 @@
 # DVH-Check
-Read RT DICOM files, evaluate protocol constraints using dicompyler, bokeh, and fuzzywuzzy (fuzzy logic to match ROIs).
+Read RT DICOM files, evaluate protocol constraints using dicompyler, bokeh, and fuzzywuzzy.
 
 ### Under active devleopment
 
