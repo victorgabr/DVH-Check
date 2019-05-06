@@ -1,12 +1,16 @@
 from __future__ import print_function
 from bokeh.layouts import column, row
 from bokeh.models.widgets import Select, Button, DataTable, TableColumn, NumberFormatter, Div, HTMLTemplateFormatter
-from bokeh.models import ColumnDataSource
+from bokeh.models import ColumnDataSource, HoverTool
+from bokeh.plotting import figure
 from dicompylercore import dicomparser, dvhcalc
 from protocols import Protocols, MAX_DOSE_VOLUME
 from utilities import get_plans
 from paths import INBOX_DIR
 from structure_aliases import StructureAliases
+from bokeh.palettes import Colorblind8 as palette
+import itertools
+import numpy as np
 
 
 class ScoreCardView:
@@ -14,6 +18,9 @@ class ScoreCardView:
 
         # Initialize Data Objects
         self.dvh = None
+        self.dvh_counts = []
+        self.bin_count = 0
+        self.bin_counts = None
         self.roi_keys = None
         self.roi_names = None
         self.roi_key_map = None
@@ -26,6 +33,8 @@ class ScoreCardView:
         self.source_data = ColumnDataSource(data=dict(roi_name=[], roi_template=[], roi_key=[], volume=[], min_dose=[],
                                                       mean_dose=[], max_dose=[], constraint=[], constraint_calc=[],
                                                       pass_fail=[], calc_type=[]))
+        self.source_plot = ColumnDataSource(data=dict(x=[], y=[], color=[]))
+        self.colors = itertools.cycle(palette)
 
         self.__define_layout_objects()
         self.__do_bind()
@@ -58,6 +67,23 @@ class ScoreCardView:
         self.data_table = DataTable(source=self.source_data, columns=self.columns, index_position=None,
                                     width=1000, height=600)
 
+        tools = "pan,wheel_zoom,box_zoom,reset,crosshair,save"
+        self.plot = figure(plot_width=1050, plot_height=500, tools=tools, active_drag="box_zoom")
+        # self.plot.min_border_left = options.MIN_BORDER
+        # self.plot.min_border_bottom = options.MIN_BORDER
+        self.plot.add_tools(HoverTool(show_arrow=False, line_policy='next',
+                                      tooltips=[('Label', '@roi_name'),
+                                                ('Dose', '$x'),
+                                                ('Volume', '$y')]))
+        # self.plot.xaxis.axis_label_text_font_size = options.PLOT_AXIS_LABEL_FONT_SIZE
+        # self.plot.yaxis.axis_label_text_font_size = options.PLOT_AXIS_LABEL_FONT_SIZE
+        # self.plot.xaxis.major_label_text_font_size = options.PLOT_AXIS_MAJOR_LABEL_FONT_SIZE
+        # self.plot.yaxis.major_label_text_font_size = options.PLOT_AXIS_MAJOR_LABEL_FONT_SIZE
+        self.plot.yaxis.axis_label_text_baseline = "bottom"
+        # self.plot.lod_factor = options.LOD_FACTOR  # level of detail during interactive plot events
+
+        self.plot.line('x', 'y', source=self.source_plot, line_width=3, alpha=1, line_dash='solid')
+
     def __do_bind(self):
         self.button_calculate.on_click(self.initialize_source_data)
         self.button_delete_roi.on_click(self.delete_selected_rows)
@@ -75,7 +101,8 @@ class ScoreCardView:
                              row(self.button_refresh_plans, self.button_calculate, self.button_delete_roi),
                              row(self.select_roi_template, self.select_roi),
                              self.max_dose_volume,
-                             self.data_table)
+                             self.data_table,
+                             self.plot)
 
     @property
     def __pass_fail_formatter(self):
@@ -174,6 +201,12 @@ class ScoreCardView:
                        'roi_key': [(i, '') for i in indices]}
             self.source_data.patch(patches)
 
+        if self.roi_key_map:
+            if new in self.roi_key_map:
+                self.update_dvh(self.roi_key_map[new])
+            else:
+                self.update_dvh(None)
+
     def source_select(self, attr, old, new):
         if new:
             self.select_roi_template.value = self.source_data.data['roi_template'][new[0]]
@@ -241,8 +274,6 @@ class ScoreCardView:
         self.roi_key_map = {name: self.roi_keys[i] for i, name in enumerate(self.roi_names)}
         self.select_roi.options = [''] + self.roi_names
         self.update_roi_select()
-
-        self.match_rois()
 
     def update_roi_select(self):
         index = self.source_data.data['roi_template'].index(self.select_roi_template.value)
@@ -329,3 +360,21 @@ class ScoreCardView:
             return self.source_data.data['volume'][index] - ans
 
         return None
+
+    # def pad_dvh_counts(self):
+    #     print(len(self.dvh_counts))
+    #     self.bin_count = max([len(dvh) for dvh in self.dvh_counts])
+    #     x_axis = list(range(self.bin_count))
+    #     padded_dvhs = []
+    #     self.bin_counts = []
+    #     for dvh in self.dvh_counts:
+    #         padded_dvhs.append(np.append(dvh, np.array([0] * (self.bin_count - len(dvh)))))
+    #         self.bin_counts.append(x_axis)
+    #     self.dvh_counts = np.array(padded_dvhs)
+
+    def update_dvh(self, key):
+        if key:
+            y_axis = self.dvh[key].counts
+            self.source_plot.data = {'x': list(range(len(y_axis))), 'y': y_axis}
+        else:
+            self.source_plot.data = {'x': [], 'y': []}
